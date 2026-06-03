@@ -60,6 +60,12 @@ drift correction), with each item processed by **A9 SUPERVISED EXECUTION**
 (plan -> deterministic write -> verify via `dotnet build`/`dotnet test`).
 Degraded to single-thread sequential (no Copilot fan-out affordance).
 
+A **B10 HUMAN CHECKPOINT** precedes the loop: the agent asks the operator
+to `git pull` all three workspace repos (java-workshop, dotnet-demo,
+dotnet-workshop) and WAITS for confirmation before grounding. The agent
+does NOT run `git pull` itself (a pull on a dirty tree / feature branch
+is a CONSEQUENTIAL SIDE EFFECT the operator must own); it only prompts.
+
 ```mermaid
 sequenceDiagram
     participant Op as Operator
@@ -68,6 +74,8 @@ sequenceDiagram
     participant Fs as workspace files (S7)
 
     Op->>Ag: select agent (FORCED)
+    Ag->>Op: ask to `git pull` all 3 repos (B10 HUMAN CHECKPOINT)
+    Op-->>Ag: confirm pulled (or skip)
     Ag->>St: load / init state table (5 steps)
     loop per step item (1..5), bounded retry
         Ag->>Ag: GROUND (read java step + demo source) [C6]

@@ -76,6 +76,29 @@ blindly -- it may drift): `Order.Service`, `Order.Service.Client`,
   referenced by the docs, and the OpenAPI/AsyncAPI/Postman resource files
   under the test `resources/` folder).
 
+## Preflight -- ask the operator to `git pull` (do NOT run it yourself)
+
+BEFORE creating any todo or reading any step file, STOP and ask the
+operator to pull the latest changes on ALL THREE repositories of the
+workspace, so the sync runs against the freshest narration, code and
+target:
+
+- `microcks-testcontainers-java-workshop` (NARRATION SOURCE)
+- `microcks-testcontainers-dotnet-demo` (CODE SOURCE OF TRUTH)
+- `microcks-testcontainers-dotnet-workshop` (TARGET)
+
+For each repo, tell the operator to run, from that repo root:
+
+```sh
+git pull
+```
+
+Do NOT execute `git pull` yourself: a pull on a dirty working tree or a
+feature branch can surprise the operator. Just ask, list the three
+repos, and WAIT for the operator to confirm they have pulled (or that
+they explicitly choose to skip) before starting the reconciliation loop
+below.
+
 ## Process (reconciliation loop -- run it as a todo list)
 
 Create one todo per step (1..5) plus a final verification todo. Maintain
