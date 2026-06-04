@@ -15,14 +15,80 @@
 //
 //
 
+using System;
 using Microsoft.AspNetCore.Builder;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Configuration;
+using Order.Service.Client;
+using Order.Service.Endpoints;
+using Order.Service.UseCases;
+using Confluent.Kafka;
+using Order.Service;
 
 var builder = WebApplication.CreateBuilder(args);
 
+// Singleton for fake "Repository" inside.
+builder.Services.AddSingleton<OrderUseCase>();
+
+var configuration = builder.Configuration;
+var pastryApiSection = configuration.GetRequiredSection("PastryApi");
+var pastryApiUrl = pastryApiSection.GetValue<string>("BaseUrl");
+if (string.IsNullOrWhiteSpace(pastryApiUrl))
+{
+    throw new InvalidOperationException("PastryApi:BaseUrl configuration is required and cannot be null or empty.");
+}
+
+builder.Services.AddHttpClient<PastryAPIClient>(opt =>
+{
+    opt.BaseAddress = new Uri(pastryApiUrl + "/");
+});
+
+// Kafka configuration
+builder.Services.AddSingleton(sp =>
+{
+    var config = new ProducerConfig
+    {
+        ClientId = "order-service-producer",
+        BootstrapServers = builder.Configuration.GetValue<string>("Kafka:BootstrapServers"),
+    };
+
+    return new ProducerBuilder<string, string>(config).Build();
+});
+
+builder.Services.AddSingleton(sp =>
+{
+    var config = new ConsumerConfig
+    {
+        ClientId = "order-service-consumer",
+        GroupId = "order-service-group",
+        BootstrapServers = builder.Configuration.GetValue<string>("Kafka:BootstrapServers"),
+        AutoOffsetReset = AutoOffsetReset.Earliest,
+        EnableAutoCommit = false
+    };
+
+    return new ConsumerBuilder<string, string>(config).Build();
+});
+
+builder.Services.AddSingleton<IEventPublisher, OrderEventPublisher>();
+builder.Services.AddScoped<IOrderEventProcessor, OrderEventProcessor>();
+builder.Services.AddHostedService<OrderEventConsumerHostedService>();
+
+// Services for API metadata
+builder.Services.AddOpenApi();
+
+builder.Services.AddProblemDetails();
+// ⬆️ Add problem details for better error handling
+
 var app = builder.Build();
+
+if (app.Environment.IsDevelopment())
+{
+    app.MapOpenApi();
+}
+
+app.MapOrderEndpoints();
 
 app.Run();
 
-// Exposed so the integration tests can reference the application entry point
-// (WebApplicationFactory<Program>) from step 4 onwards.
 public partial class Program { }
