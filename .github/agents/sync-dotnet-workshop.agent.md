@@ -47,6 +47,30 @@ blindly -- it may drift): `Order.Service`, `Order.Service.Client`,
 `Order.Service.UseCases`, `Order.Service.UseCases.Model`,
 `Order.Service.Tests`.
 
+## The second rule (narration parity -- never drop Java prose)
+
+The demo is authoritative for **CODE**; the **Java workshop is
+authoritative for NARRATION**. The demo step docs are a convenience, NOT
+the narration baseline: they routinely OMIT Java-only pedagogical prose.
+The single most common failure of this agent is silently dropping a Java
+prose block because the matching demo doc does not contain it.
+
+Therefore, EVERY Java prose block must survive into the target step doc,
+even when it has no code and the demo doc ignores it. Pay special
+attention to these Java-only constructs, which carry the workshop's
+pedagogical value:
+
+- `### 🎁 Bonus step - ...` headings and their entire body,
+- interactive questions (lines containing `?`, e.g. "How can you...",
+  "Can you change it?", "where ... are coming from?"),
+- `> [!NOTE]` / `> [!TIP]` callouts and numbered exercises,
+- "Wrap-up" / closing sections.
+
+When the demo doc and the Java doc disagree on prose, KEEP the Java prose
+and only swap the code block for the demo's C#. A demo-specific block
+(e.g. a .NET note absent from Java) is additive -- keep it too -- but it
+NEVER justifies removing a Java block.
+
 ## Structure conventions (from the demo, not from Java)
 
 - Step doc filenames follow the **demo** convention `stepN-name.md`
@@ -121,6 +145,10 @@ For EACH step item, run the supervised cycle:
    .NET reader. Keep the narrative arc, headings and diagrams as close to
    the Java original as possible. Preserve mermaid diagrams; only adjust
    participant/class names to the C# types.
+   BEFORE moving on, enumerate every `### 🎁 Bonus step` heading and every
+   interactive question line in the Java doc, and confirm each one has a
+   slot in your plan for the target. Anything not explicitly placed is a
+   block you are about to drop -- add it back.
 
 3. **EXECUTE (write).** Write the target `stepN-*.md`. On step 1 (or when
    the scaffold is missing), also lay down the starter solution: copy the
@@ -133,6 +161,15 @@ For EACH step item, run the supervised cycle:
      (`import org.`, `@SpringBootTest`, `@Autowired`, `public class ... {`
      Java style, `assertEquals(` from JUnit, `package org.acme`). Any hit
      -> go back to step 2 for that block.
+   - Narration-parity gate: grep the Java step file for every
+     `### 🎁 Bonus step` heading, then grep the target `stepN-*.md` for the
+     SAME heading text. Every Java bonus heading MUST be present in the
+     target (verbatim title, language adjustments aside). Likewise, list
+     the Java interactive question lines (those ending with `?`) and
+     confirm each has an equivalent in the target. Any Java bonus heading
+     or question missing from the target -> go back to step 2 and port it
+     (keep Java prose, adapt paths/code to .NET). This gate BLOCKS: a
+     missing bonus block is a failure, not a warning.
    - Every C# block declares or sits under a `namespace` consistent with
      the demo. Missing/`unknown` namespace -> fix.
    - Scaffold gate: run `dotnet build` on the starter solution from the
@@ -167,3 +204,7 @@ you could not find grounding C# in the demo (never silently invent it).
 - Do not implement the application: the starter stays empty by design
   (functional `Program.cs` + `.gitkeep` folders).
 - No C# without a demo source. When in doubt, read more of the demo.
+- No dropped narration: every Java `🎁 Bonus step` and interactive
+  question must reach the target step doc. The demo doc omitting a block
+  is never a reason to omit it -- the Java workshop is the narration
+  baseline.
