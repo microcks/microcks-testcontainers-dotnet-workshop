@@ -358,6 +358,19 @@ sequenceDiagram
 
 Our `OrderEndpoint` (or `OrderController` if you use MVC) development is technically correct: all the JSON and HTTP serialization layers have been tested!
 
+### 🎁 Bonus step - Explore the structure of TestResult
+
+The `TestResult` returned by Microcks can be further checked as it is a comprehensive representation of all the testing cases.
+
+Add this .NET block to the `TestOpenAPIContract()` method and run your test again:
+
+```csharp
+// You may inspect complete response object with following:
+var json = JsonSerializer.Serialize(testResult, new JsonSerializerOptions { WriteIndented = true });
+TestOutputHelper.WriteLine(json);
+```
+
+To get some more visual representation of a `TestResult`, you may want to launch the application in test mode and run this test manually using the UI. Explore the different results and information available.
 
 ## Third Test - Verify the business conformance of Order Service API
 
