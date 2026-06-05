@@ -13,14 +13,14 @@ The `Order Service` application has been designed around 5 main components that 
 
 ![Order Service architecture](./assets/order-service-architecture.png)
 
-Of course, this is a very naive vision of a real-life system as such an application would certainly pull out much more dependencies (like a Payment Service, a Customer Service, a Shipping Service, and much more) and offer more complex API.
+Of course, this is a very naive vision of a real-life system as such an application would certainly pull out much more dependencies (like a `Payment Service`, a `Customer Service`, a `Shipping Service`, and much more) and offer more complex API.
 
 However, this situation is complex enough to highlight the two problems we're addressing:
 
 1. How to **efficiently set up a development environment** that depends on third-party API like the Pastry API?
    - You certainly want to avoid cloning this component repository and trying to figure out how to launch and configure it accordingly.
    - As a developer, developing your own mock of this service makes you also lose time and risk drifting from initial intent.
-2. How to **efficiently validate the conformance** of the Order API and Order Events against business expectations and API contracts?
+2. How to **efficiently validate the conformance** of the `Order API` and `Order Events` against business expectations and API contracts?
    - Besides the core business logic, you might want to validate the network and protocol serialization layers as well as the respect of semantics.
 
 ## Business logic

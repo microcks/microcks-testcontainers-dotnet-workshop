@@ -5,7 +5,7 @@ Our application uses Kafka and external dependencies.
 Currently, if you run the application from your terminal, you will see the following error:
 
 ```shell
-dotnet run  
+dotnet run --project src/Order.Service
 
 Génération...
 Unhandled exception. System.InvalidOperationException: Section 'PastryApi' not found in configuration.
@@ -15,7 +15,7 @@ Unhandled exception. System.InvalidOperationException: Section 'PastryApi' not f
 
 To run the application locally, we need to have a Kafka broker up and running + the other dependencies corresponding to our Pastry API provider and reviewing system.
 
-Instead of installing these services on our local machine, or using Docker to run these services manually, we will use a utility tool with this simple command microcks.sh. Microcks docker-compose file (microcks-docker-compose.yml) has been configured to automatically import the Order API contract but also the Pastry API contracts. Both APIs are discovered on startup and Microcks UI should be available on http://localhost:9090 in your browser:
+Instead of installing these services on our local machine, or using Docker to run these services manually, we will use a utility tool with this simple command `microcks.sh`. Microcks docker-compose file (`microcks-docker-compose.yml`) has been configured to automatically import the Order API contract but also the Pastry API contracts. Both APIs are discovered on startup and Microcks UI should be available on http://localhost:9090 in your browser:
 
 ```shell
 ./microcks.sh

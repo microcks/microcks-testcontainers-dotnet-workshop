@@ -16,29 +16,29 @@ You need to have a [Docker](https://docs.docker.com/get-docker/) or [Podman](htt
 $ docker version
 
 Client:
- Version:           28.1.1
- API version:       1.49
- Go version:        go1.23.8
- Git commit:        4eba377
- Built:             Fri Apr 18 09:49:45 2025
+ Version:           29.4.2
+ API version:       1.54
+ Go version:        go1.26.2
+ Git commit:        055a478
+ Built:             Fri May  1 01:23:38 2026
  OS/Arch:           darwin/arm64
  Context:           desktop-linux
 
-Server: Docker Desktop 4.41.2 (191736)
+Server: Docker Desktop 4.72.0 (225998)
  Engine:
-  Version:          28.1.1
-  API version:      1.49 (minimum version 1.24)
-  Go version:       go1.23.8
-  Git commit:       01f442b
-  Built:            Fri Apr 18 09:52:08 2025
+  Version:          29.4.2
+  API version:      1.54 (minimum version 1.40)
+  Go version:       go1.26.2
+  Git commit:       d329809
+  Built:            Fri May  1 01:25:57 2026
   OS/Arch:          linux/arm64
   Experimental:     false
  containerd:
-  Version:          1.7.27
-  GitCommit:        05044ec0a9a75232cad458027ca83437aae3f4da
+  Version:          v2.2.3
+  GitCommit:        77c84241c7cbdd9b4eca2591793e3d4f4317c590
  runc:
-  Version:          1.2.5
-  GitCommit:        v1.2.5-0-g59923ef
+  Version:          1.3.5
+  GitCommit:        v1.3.5-0-g488fc13e
  docker-init:
   Version:          0.19.0
   GitCommit:        de40ad0
