@@ -634,7 +634,7 @@ Comparing to the code in previous section, the only change here is that we asked
 for executing our conformance test. What happens under the hood is now that Microcks is re-using the collection snippets
 to put some constraints on API response and check their conformance.
 
-> > [!TIP]
+> [!TIP]
 > You can run it using this command: `dotnet test tests/Order.Service.Tests --filter "FullyQualifiedName~OrderControllerPostmanContractTests"`
 
 The test sequence is exactly the same as in the previous section. The difference here lies in the type of response validation: Microcks
