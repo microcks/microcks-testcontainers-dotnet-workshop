@@ -337,6 +337,19 @@ sequenceDiagram
 
 You did it and succeed in writing integration tests for all your application component with minimum boilerplate code! 🤩 
 
+### 🎁 Bonus step - Understanding where all come from
+
+You're now certain that your application is able to consume message and trigger correct business code. But do you fully understand
+where this `lbroudoux` and `123-456-789` values are coming from?
+
+To further deepen you knowledge on this, please check the following elements:
+* Check `tests/Order.Service.Tests/resources/order-events-asyncapi.yaml` file and especially the `messages/examples` section,
+* Use `docker ps` command or Docker Desktop to retrieve the local port where Microcks is actually started and open it in your browser and check:
+
+  * Mocks for **Order Events API - 0.1.0** and the publication frequency
+  * Can you change it?
+
+* Explore our [AsyncAPI Extensions](https://microcks.io/documentation/references/artifacts/asyncapi-conventions/#asyncapi-extensions) to see how your can control this
 
 ### Why we manually start the consumer instead of relying on IHostedService
 
