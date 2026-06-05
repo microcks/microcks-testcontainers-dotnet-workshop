@@ -9,7 +9,7 @@ Let's fix that!!
 
 For all the integration tests in our application, we need to start Kafka and use mocks provided by Microcks containers.
 
-### Review OrderServiceWebApplicationFactory<Program> class under tests/Order.Service.Tests
+### Create `OrderServiceWebApplicationFactory.cs` class under `tests/Order.Service.Tests`
 
 In .NET, we use a custom `WebApplicationFactory<Program>` to provision all required containers and inject configuration for local development and testing. This leverages the .NET Testcontainers library and ASP.NET Core's test infrastructure.
 
@@ -20,53 +20,186 @@ Here's how it works:
 * The factory exposes host ports and injects the correct mock endpoints (e.g., Pastry API) into the application configuration, so your HTTP clients use the simulated endpoints provided by Microcks.
 * The test base class (`BaseIntegrationTest`) ensures all tests have access to the factory, port, and container ensemble.
 
-Example:
+Let's create this file as follows:
+
 ```csharp
+using System;
+using System.Net;
+using System.Net.Sockets;
+using System.Threading.Tasks;
+using System.Threading;
+using System.Linq;
+
+using DotNet.Testcontainers.Builders;
+using DotNet.Testcontainers.Configurations;
+
+using Microcks.Testcontainers;
+using Microcks.Testcontainers.Connection;
+
+using Microsoft.AspNetCore.Hosting;
+using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.Extensions.Hosting;
+
+using Testcontainers.Kafka;
+
+using Xunit;
+
+namespace Order.Service.Tests;
+
 public class OrderServiceWebApplicationFactory<TProgram> : WebApplicationFactory<TProgram>, IAsyncLifetime
     where TProgram : class
 {
-    // ...existing code...
+
+    private const string MicrocksImage = "quay.io/microcks/microcks-uber:1.14.0-native";
+
+    private static readonly SemaphoreSlim InitializationSemaphore = new(1, 1);
+    private static bool _isInitialized;
+
+    public KafkaContainer KafkaContainer { get; private set; } = null!;
+
+    public MicrocksContainerEnsemble MicrocksContainerEnsemble { get; private set; } = null!;
+
+    public ushort ActualPort { get; private set; }
+
+    public bool IsInitialized => _isInitialized;
+
+    private ushort GetAvailablePort()
+    {
+        try
+        {
+            using var socket = new Socket(SocketType.Stream, ProtocolType.Tcp);
+            socket.Bind(new IPEndPoint(IPAddress.Any, 0));
+            return (ushort)((IPEndPoint)socket.LocalEndPoint!).Port;
+        }
+        catch (SocketException ex)
+        {
+            throw new InvalidOperationException("Could not find an available port.", ex);
+        }
+    }
+
     public async ValueTask InitializeAsync()
     {
-        // Allocate a free port and expose it for container communication
-        ActualPort = GetAvailablePort();
-        UseKestrel(ActualPort); // ⬅️ Here we configure Kestrel to use the allocated port
+        // Use semaphore to ensure only one initialization happens across all test instances
+        await InitializationSemaphore.WaitAsync(TestContext.Current.CancellationToken);
+        try
+        {
+            if (_isInitialized)
+            {
+                TestLogger.WriteLine("[OrderServiceWebApplicationFactory] Factory already initialized, skipping...");
+                return;
+            }
 
-        // ⬇️ Here we expose the port for host communication, before starting the containers
-        await TestcontainersSettings.ExposeHostPortsAsync(ActualPort, TestContext.Current.CancellationToken)
-            .ConfigureAwait(true);
+            TestLogger.WriteLine("[OrderServiceWebApplicationFactory] Starting initialization...");
 
-        var network = new NetworkBuilder().Build();
-        KafkaContainer = new KafkaBuilder()
-            .WithImage("confluentinc/cp-kafka:7.9.0")
-            .WithNetwork(network)
-            .WithNetworkAliases("kafka")
-            .WithListener("kafka:19092")
-            .Build();
-        await this.KafkaContainer.StartAsync(TestContext.Current.CancellationToken)
-            .ConfigureAwait(true);
+            // The port is dynamically determined because we use Microcks,
+            // so we need to get an available port before starting the server (Kestrel) and Microcks.
+            // because we use microcks to set up the base address for the API in the settings.
+            ActualPort = GetAvailablePort();
+            TestLogger.WriteLine("[OrderServiceWebApplicationFactory] Using port: {0}", ActualPort);
 
-        this.MicrocksContainerEnsemble = new MicrocksContainerEnsemble(network, MicrocksImage)
-            .WithAsyncFeature()
-            .WithMainArtifacts("resources/order-service-openapi.yaml", "resources/order-events-asyncapi.yaml", "resources/third-parties/apipastries-openapi.yaml")
-            .WithSecondaryArtifacts("resources/order-service-postman-collection.json", "resources/third-parties/apipastries-postman-collection.json")
-            .WithKafkaConnection(new KafkaConnection($"kafka:19092"));
-        await this.MicrocksContainerEnsemble.StartAsync()
-            .ConfigureAwait(true);
+            UseKestrel(ActualPort);
+            await TestcontainersSettings.ExposeHostPortsAsync(ActualPort, TestContext.Current.CancellationToken)
+                .ConfigureAwait(true);
+
+            string kafkaListener = "kafka:19092";
+
+            var network = new NetworkBuilder().Build();
+            TestLogger.WriteLine("[OrderServiceWebApplicationFactory] Creating Kafka container...");
+
+            KafkaContainer = new KafkaBuilder()
+                .WithImage("confluentinc/cp-kafka:7.9.0")
+                //.WithPortBinding(9092, KafkaBuilder.KafkaPort)
+                .WithPortBinding(9093, KafkaBuilder.BrokerPort)
+                .WithNetwork(network)
+                .WithNetworkAliases("kafka")
+                .WithListener(kafkaListener)
+                .Build();
+
+            // Start the Kafka container
+            TestLogger.WriteLine("[OrderServiceWebApplicationFactory] Starting Kafka container...");
+            await this.KafkaContainer.StartAsync(TestContext.Current.CancellationToken)
+                .ConfigureAwait(true);
+
+            // Create the Microcks container ensemble with the Kafka connection
+            this.MicrocksContainerEnsemble = new MicrocksContainerEnsemble(network, MicrocksImage)
+                .WithAsyncFeature() // We need this for async mocking and contract-testing
+                .WithPostman() // We need this for Postman contract-testing
+                .WithMainArtifacts("resources/order-service-openapi.yaml", "resources/order-events-asyncapi.yaml", "resources/third-parties/apipastries-openapi.yaml")
+                .WithSecondaryArtifacts("resources/order-service-postman-collection.json", "resources/third-parties/apipastries-postman-collection.json")
+                .WithKafkaConnection(new KafkaConnection(kafkaListener)); // We need this to connect to Kafka
+
+            TestLogger.WriteLine("[OrderServiceWebApplicationFactory] Starting Microcks container ensemble...");
+            await this.MicrocksContainerEnsemble.StartAsync()
+                .ConfigureAwait(true);
+
+            _isInitialized = true;
+            TestLogger.WriteLine("[OrderServiceWebApplicationFactory] Initialization completed successfully");
+        }
+        finally
+        {
+            InitializationSemaphore.Release();
+        }
     }
 
     protected override void ConfigureWebHost(IWebHostBuilder builder)
     {
         base.ConfigureWebHost(builder);
 
+        // Delete IHostedService registrations if needed
+        builder.ConfigureServices(services =>
+        {
+            // Remove any IHostedService registrations if needed
+            // Find OrderEventConsumer hosted service and remove it
+            var hostedServiceDescriptor = services
+                .Single(d => d.ServiceType == typeof(IHostedService) &&
+                                     d.ImplementationType == typeof(OrderEventConsumerHostedService));
+
+            // Delete the descriptor
+            if (hostedServiceDescriptor != null)
+            {
+                services.Remove(hostedServiceDescriptor);
+            }
+        });
+
         var microcksContainer = this.MicrocksContainerEnsemble.MicrocksContainer;
-        var pastryApiEndpoint = microcksContainer.GetRestMockEndpoint("API Pastries", "0.0.1");
+        var pastryApiEndpoint = microcksContainer.GetRestMockEndpoint("API+Pastries", "0.0.1");
 
         // Configure the factory to use the Microcks container address
         // Use Uri constructor to ensure proper path handling
-        builder.UseSetting("PastryApi:BaseUrl", $"{pastryApiEndpoint}/");
+        builder.UseSetting("PastryApi:BaseUrl", $"{pastryApiEndpoint}");
+
+        // Configure the factory to use the Kafka container address
+        var kafkaBootstrapServers = this.KafkaContainer.GetBootstrapAddress()
+            .Replace("PLAINTEXT://", "", StringComparison.OrdinalIgnoreCase);
+        builder.UseSetting("Kafka:BootstrapServers", kafkaBootstrapServers);
+
+        var microcksMinion = MicrocksContainerEnsemble.AsyncMinionContainer;
+        var orderEventsReviewedTopic = microcksMinion
+            .GetKafkaMockTopic("Order Events API", "0.1.0", "PUBLISHED orders-reviewed");
+        builder.UseSetting("Kafka:OrderEventsTopic", orderEventsReviewedTopic);
     }
-    // ...existing code...
+    
+    public async override ValueTask DisposeAsync()
+    {
+        TestLogger.WriteLine("[OrderServiceWebApplicationFactory] Starting disposal...");
+
+        await base.DisposeAsync();
+
+        if (KafkaContainer != null)
+        {
+            TestLogger.WriteLine("[OrderServiceWebApplicationFactory] Disposing Kafka container...");
+            await this.KafkaContainer.DisposeAsync();
+        }
+
+        if (MicrocksContainerEnsemble != null)
+        {
+            TestLogger.WriteLine("[OrderServiceWebApplicationFactory] Disposing Microcks container ensemble...");
+            await this.MicrocksContainerEnsemble.DisposeAsync();
+        }
+
+        _isInitialized = false;
+        TestLogger.WriteLine("[OrderServiceWebApplicationFactory] Disposal completed");
+    }
 }
 ```
 
@@ -87,7 +220,7 @@ In detail:
 
 And that's it! 🎉 You don't need to download and install extra-things, or clone other repositories and figure out how to start your dependant services. 
 
-### Review BaseIntegrationTest class under `tests/Order.Service.Tests`
+### Create `BaseIntegrationTest.cs` file under `tests/Order.Service.Tests`
 
 Next, let's create a `BaseIntegrationTest` class under `tests/Order.Service.Tests` to encapsulate the common setup and configuration our integration tests.
 
@@ -95,20 +228,40 @@ The `BaseIntegrationTest` implements `IClassFixture<WebApplicationFactory<Progra
 
 
 ```csharp
-using System.Net.Http;
-using Microsoft.AspNetCore.Mvc.Testing;
+using Microcks.Testcontainers;
+
 using Xunit;
 
-namespace Order.Service.Tests
-{
-    public class BaseIntegrationTest : IClassFixture<WebApplicationFactory<Program>>
-    {
-        protected readonly HttpClient _client;
+using Microsoft.AspNetCore.Mvc.Testing;
+using System.Net.Http;
+using Testcontainers.Kafka;
 
-        public BaseIntegrationTest(WebApplicationFactory<Program> factory)
-        {
-            _client = factory.CreateClient();
-        }
+namespace Order.Service.Tests;
+
+public class BaseIntegrationTest : IClassFixture<OrderServiceWebApplicationFactory<Program>>
+{
+    public WebApplicationFactory<Program> Factory { get; private set; }
+
+    public ushort Port { get; private set; }
+    public MicrocksContainerEnsemble MicrocksContainerEnsemble { get; }
+    public MicrocksContainer MicrocksContainer => MicrocksContainerEnsemble.MicrocksContainer;
+    public KafkaContainer KafkaContainer { get; }
+    public HttpClient? HttpClient { get; private set; }
+
+    public BaseIntegrationTest(OrderServiceWebApplicationFactory<Program> factory)
+    {
+        Factory = factory;
+
+        HttpClient = this.Factory.CreateClient();
+        Port = factory.ActualPort;
+
+        MicrocksContainerEnsemble = factory.MicrocksContainerEnsemble;
+        KafkaContainer = factory.KafkaContainer;
+    }
+
+    protected void SetupTestOutput(ITestOutputHelper testOutputHelper)
+    {
+        TestLogger.SetTestOutput(testOutputHelper);
     }
 }
 ```
@@ -119,9 +272,20 @@ In this section, we'll focus on testing the `Pastry API Client` component of our
 
 ![Pastry API Client](./assets/test-pastry-api-client.png)
 
-Let's review the test class `PastryAPIClientTests` under `tests/Order.Service.Tests/Clients`.
+Let's create the test class `PastryAPIClientTests` under `tests/Order.Service.Tests/Client`.
 
 ```csharp
+using System;
+using System.Collections.Generic;
+using System.Threading.Tasks;
+using Microcks.Testcontainers;
+using Microsoft.Extensions.DependencyInjection;
+using Order.Service.Client;
+using Order.Service.Client.Model;
+using Xunit;
+
+namespace Order.Service.Tests.Client;
+
 public class PastryAPIClientTests : BaseIntegrationTest
 {
     private readonly ITestOutputHelper TestOutputHelper;
@@ -174,7 +338,6 @@ public class PastryAPIClientTests : BaseIntegrationTest
         Assert.False(eclairChocolat.IsAvailable());
     }
 }
-
 ```
 
 If you run this test, it should pass and that means we have successfully configured the application to start with all the required containers
@@ -182,6 +345,9 @@ and that they're correctly wired to the application. Within this test:
 * We're reusing the data that comes from the examples in the `Pastry API` OpenAPI specification and Postman collection.
 * The `PastryAPIClient` has been configured with a REST Client that is wired to the Microcks mock endpoints.
 * We're validating the configuration of this client as well as all the JSON and network serialization details of our configuration!  
+
+> > [!TIP]
+> You can run it using this command: `dotnet test tests/Order.Service.Tests --filter "FullyQualifiedName~PastryAPIClientTests"`
 
 The sequence diagram below details the test sequence. Microcks is used as a third-party backend to allow going through all the layers:
 
@@ -253,7 +419,7 @@ public async Task TestPastryAPIClient_GetPastryByNameAsync()
     Assert.Equal("Eclair Chocolat", eclairChocolat.Name);
     Assert.False(eclairChocolat.IsAvailable());
 
-    // Vérifier le nombre d'invocations
+    // Check the number of invocations.
     double finalInvocationCount = await MicrocksContainer.GetServiceInvocationsCountAsync("API Pastries", "0.0.1");
     Assert.Equal(initialInvocationCount + 3, finalInvocationCount);
 }
@@ -269,10 +435,7 @@ we'll focus on testing the `OrderController` component of our application:
 
 ![Order Controller Test](./assets/test-order-service-api.png)
 
-
-## Bonus - Test the exposed HTTP API directly
-
-You can also write an integration test that uses `HttpClient` to invoke the exposed HTTP layer and validate each response with .NET assertions:
+You could write an integration test that uses `HttpClient` to invoke the exposed HTTP layer and validate each response with .NET assertions:
 
 ```csharp
 [Fact]
@@ -288,14 +451,14 @@ public async Task Should_Return_Order_When_Get_By_Id()
     using var doc = System.Text.Json.JsonDocument.Parse(json);
     var root = doc.RootElement;
 
-    // Vérification explicite de la structure JSON
+    // Check the JSON structure correctness.
     Assert.True(root.TryGetProperty("orderId", out var orderIdProp), "orderId property should exist");
     Assert.Equal(orderId, orderIdProp.GetInt32());
 
     Assert.True(root.TryGetProperty("status", out var statusProp), "status property should exist");
     Assert.Equal("Created", statusProp.GetString());
 
-    // Vérifier d'autres propriétés attendues si besoin
+    // Check other properties if needed.
 }
 ```
 
@@ -309,24 +472,48 @@ This certainly works but presents 2 problems in my humble opinion:
 Microcks Testcontainer integration provides another approach by letting you reuse the OpenAPI specification directly in your test suite,
 without having to write assertions and validation of messages for API interaction.
 
-Let's review the test class `OrderControllerContractTests` under `tests/Order.Service.Tests/Api`:
+Let's write the test class `OrderControllerContractTests` under `tests/Order.Service.Tests/Api`:
 
 ```csharp
-[Fact]
-public async Task TestOpenApiContract()
+using System.Collections.Generic;
+using System.Text.Json;
+using System.Threading.Tasks;
+using Microcks.Testcontainers;
+using Microcks.Testcontainers.Model;
+using Xunit;
+
+namespace Order.Service.Tests.Api;
+
+public class OrderControllerContractTests : BaseIntegrationTest
 {
-    TestRequest request = new()
+    private readonly ITestOutputHelper TestOutputHelper;
+
+    public OrderControllerContractTests(
+        ITestOutputHelper testOutputHelper,
+        OrderServiceWebApplicationFactory<Program> factory)
+        : base(factory)
     {
-        ServiceId = "Order Service API:0.1.0",
-        RunnerType = TestRunnerType.OPEN_API_SCHEMA,
-        TestEndpoint = "http://host.testcontainers.internal:" + Port + "/api"
-    };
+        TestOutputHelper = testOutputHelper;
+        SetupTestOutput(testOutputHelper);
+    }
 
-    var testResult = await MicrocksContainer.TestEndpointAsync(request);
+    [Fact]
+    public async Task TestOpenApiContract()
+    {
+        TestRequest request = new()
+        {
+            ServiceId = "Order Service API:0.1.0",
+            RunnerType = TestRunnerType.OPEN_API_SCHEMA,
+            TestEndpoint = "http://host.testcontainers.internal:" + Port + "/api",
+        };
 
-    Assert.True(testResult.Success, "Test should be successful");
+        var testResult = await MicrocksContainer.TestEndpointAsync(request, TestContext.Current.CancellationToken);
 
-    Assert.Single(testResult.TestCaseResults);
+        Assert.False(testResult.InProgress, "Test should not be in progress");
+        Assert.True(testResult.Success, "Test should be successful");
+
+        Assert.Single(testResult.TestCaseResults);
+    }
 }
 ```
 
@@ -338,6 +525,9 @@ test we want to run:
 * We ask Microcks to validate the localhost endpoint on the dynamic port provided by the Spring Test (we use the `host.testcontainers.internal` alias for that).
 
 Finally, we're retrieving a `TestResult` from Microcks containers, and we can assert stuffs on this result, checking it's a success.
+
+> > [!TIP]
+> You can run it using this command: `dotnet test tests/Order.Service.Tests --filter "FullyQualifiedName~OrderControllerContractTests"`
 
 The sequence diagram below details the test sequence. Microcks is used as a middleman that actually invokes your API with the example from its dataset: 
 
@@ -367,7 +557,7 @@ Add this .NET block to the `TestOpenAPIContract()` method and run your test agai
 ```csharp
 // You may inspect complete response object with following:
 var json = JsonSerializer.Serialize(testResult, new JsonSerializerOptions { WriteIndented = true });
-TestOutputHelper.WriteLine(json);
+TestContext.Current.SendDiagnosticMessage(json);
 ```
 
 To get some more visual representation of a `TestResult`, you may want to launch the application in test mode and run this test manually using the UI. Explore the different results and information available.
@@ -399,14 +589,29 @@ pm.test("Correct products and quantities in order", function () {
 
 This snippet typically describes business constraints telling that a valid order response should have unchanged product and quantities.  
 
-You can now validate this from your Java Unit Test as well! Let's review the test class `OrderControllerPostmanContractTests` 
+You can now validate this from your Dotnet Unit Test as well! Let's review the test class `OrderControllerPostmanContractTests` 
 under `tests/Order.Service.Tests/Api`:
 
 ```csharp
+using System.Collections.Generic;
+using System.Text.Json;
+using System.Threading.Tasks;
+using Microcks.Testcontainers;
+using Microcks.Testcontainers.Model;
+using Xunit;
+
+namespace Order.Service.Tests.Api;
+
 public class OrderControllerPostmanContractTests : BaseIntegrationTest
 {
+    public OrderControllerPostmanContractTests(
+        OrderServiceWebApplicationFactory<Program> factory)
+        : base(factory)
+    {
+    }
+
     [Fact]
-    public void TestPostmanCollectionContract()
+    public async Task TestPostmanCollectionContract()
     {
         // Ask for a Postman Collection script conformance to be launched.
         TestRequest request = new()
@@ -428,6 +633,9 @@ public class OrderControllerPostmanContractTests : BaseIntegrationTest
 Comparing to the code in previous section, the only change here is that we asked Microcks to use a `Postman` runner
 for executing our conformance test. What happens under the hood is now that Microcks is re-using the collection snippets
 to put some constraints on API response and check their conformance.
+
+> > [!TIP]
+> You can run it using this command: `dotnet test tests/Order.Service.Tests --filter "FullyQualifiedName~OrderControllerPostmanContractTests"`
 
 The test sequence is exactly the same as in the previous section. The difference here lies in the type of response validation: Microcks
 reuses Postman collection constraints.

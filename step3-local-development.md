@@ -137,7 +137,7 @@ and this is because Microcks has created different simulations for the Pastry AP
 
 ### 🎁 Bonus step - Explore Microcks UI and understand dispatchers
 
-* Use `docker ps` command or Docker Desktop to retrieve the local port where Microcks is actually started and open it in your browser
+* Use `docker ps` command or Docker Desktop to retrieve the local port where Microcks is actually started and open it in your browser (it should be http://localhost:9090 if you didn't change the port 😉)
 * Review the mocked APIs:
 
   * How can you visually check that the **API Pastries - 0.0.1** mock is called?
