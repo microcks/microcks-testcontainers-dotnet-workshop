@@ -15,10 +15,26 @@ regarding an Event definition...
 
 Fortunately, Microcks and TestContainers make this thing easy!
 
-Let's review the test class `OrderKafkaContractTests` under `tests/Order.Service.Tests/UseCases` and the well-named `TestOrderEventIsPublishedOnKafka()` 
-method:
+Let's create a new test class `OrderEventPublisherContractTests` under `tests/Order.Service.Tests/UseCases` and the well-named `TestOrderEventIsPublishedOnKafka()` method:
 
 ```csharp
+using System;
+using System.Collections.Generic;
+using System.Text.Json;
+using System.Threading.Tasks;
+using Microcks.Testcontainers;
+using Microcks.Testcontainers.Model;
+using Order.Service.Client.Model;
+using Order.Service.UseCases.Model;
+using Xunit;
+using Order.Service.UseCases;
+using Microsoft.Extensions.DependencyInjection;
+using Confluent.Kafka;
+using Confluent.Kafka.Admin;
+using System.Linq;
+
+namespace Order.Service.Tests.UseCases;
+
 public class OrderEventPublisherContractTests : BaseIntegrationTest
 {
     private readonly ITestOutputHelper TestOutputHelper;
@@ -42,10 +58,10 @@ public class OrderEventPublisherContractTests : BaseIntegrationTest
         var kafkaTest = new TestRequest
         {
             ServiceId = "Order Events API:0.1.0",
-            FilteredOperations = new[] { "SUBSCRIBE orders-created" },
+            FilteredOperations = ["SUBSCRIBE orders-created"],
             RunnerType = TestRunnerType.ASYNC_API_SCHEMA,
             TestEndpoint = "kafka://kafka:19092/orders-created",
-            Timeout = 2000L
+            Timeout = TimeSpan.FromSeconds(2)
         };
 
         // Prepare an application Order.
@@ -76,9 +92,30 @@ public class OrderEventPublisherContractTests : BaseIntegrationTest
         Assert.True(testResult.Success);
         Assert.NotEmpty(testResult.TestCaseResults);
         Assert.Single(testResult.TestCaseResults[0].TestStepResults);
+    }
 
-        var events = await MicrocksContainer.GetEventMessagesForTestCaseAsync(testResult, "SUBSCRIBE orders-created", TestContext.Current.CancellationToken);
-        Assert.Single(events);
+    private async Task EnsureTopicExistsAsync(string topic)
+    {
+        using var adminClient = new AdminClientBuilder(new AdminClientConfig
+        {
+            BootstrapServers = this.KafkaContainer.GetBootstrapAddress().Replace("PLAINTEXT://", "", StringComparison.OrdinalIgnoreCase)
+        })
+        .Build();
+
+        // Create the topic if it doesn't exist
+        var topicMetadata = adminClient.GetMetadata(topic, TimeSpan.FromSeconds(5));
+        if (topicMetadata.Topics.Count == 0)
+        {
+            await adminClient.CreateTopicsAsync(
+            [
+                new TopicSpecification
+                {
+                    Name = topic,
+                    NumPartitions = 1,
+                    ReplicationFactor = 1
+                }
+            ]);
+        }
     }
 }
 ```
@@ -94,6 +131,9 @@ Things are a bit more complex here, but we'll walk through step-by-step:
   * We wait a bit here to ensure, Microcks got some time to start the test and connect to Kafka broker.
 * We can invoke our business service by creating an order with `PlaceOrderAsync()` method. We could assert whatever we want on created order as well.
 * Finally, we wait for the task completion to retrieve the `TestResult` and assert on the success and check we received 1 message as a result.
+
+> [!TIP]
+> You can run it using this command: `dotnet test tests/Order.Service.Tests --filter "FullyQualifiedName~OrderEventPublisherContractTests"`
 
 The sequence diagram below details the test sequence. You'll see 2 parallel blocks being executed:
 * One that corresponds to Microcks test - where it connects and listen for Kafka messages,
@@ -161,7 +201,7 @@ public async Task TestOrderEventIsPublishedOnKafka()
 Here, we're using the `GetEventMessagesForTestCaseAsync()` method on the Microcks container to retrieve the messages read during the test execution.
 Using the wrapped `EventMessage` class, we can then check the content of the message and assert that it matches the order we've created.
 
-## Second Test - Verify our OrderEventConsumer is processing events
+## Second Test - Verify our OrderEventListener is processing events
 
 In this section, we'll focus on testing the `Event Consumer` + `Order Service` components of our application:
 
@@ -171,10 +211,23 @@ The final thing we want to test here is that our `OrderEventConsumerHostedServic
 for consuming messages, for de-serializing them into correct C# objects and for triggering the processing on the `OrderUseCase`.
 That's a lot to do and can be quite complex! But things remain very simple with Microcks 😉
 
-Let's review the test class `OrderEventListenerTests` under `tests/Order.Service.Tests/UseCases` and the well-named `TestEventIsConsumedAndProcessedByService()`
+Let's create the test class `OrderEventListenerTests` under `tests/Order.Service.Tests/UseCases` and the well-named `TestEventIsConsumedAndProcessedByService()`
 method:
 
 ```csharp
+using System;
+using System.Threading;
+using System.Threading.Tasks;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
+using Order.Service.UseCases;
+using Order.Service.UseCases.Model;
+using OrderModel = Order.Service.UseCases.Model.Order;
+using static Awaitility.Awaitility;
+using Xunit;
+
+namespace Order.Service.Tests.UseCases;
+
 public class OrderEventListenerTests : BaseIntegrationTest
 {
     private readonly ITestOutputHelper TestOutputHelper;
@@ -199,11 +252,41 @@ public class OrderEventListenerTests : BaseIntegrationTest
         using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
         var consumerTask = StartOrderEventConsumerAsync(cts.Token);
 
+        var orderUseCase = Factory.Services.GetRequiredService<OrderUseCase>();
         OrderModel? order = null;
-        // Act & Assert - Polling pattern similar to the Java example
+
+        // Act & Assert
         try
         {
-            order = await PollForOrderProcessingAsync(expectedOrderId, cts);
+            Await().
+                AtMost(TimeSpan.FromSeconds(4))
+                .PollDelay(TimeSpan.FromMilliseconds(400))
+                .PollInterval(TimeSpan.FromMilliseconds(400))
+                .Until(() =>
+                {
+                    try
+                    {
+                        var retrievedOrder = orderUseCase.GetOrderAsync(expectedOrderId, TestContext.Current.CancellationToken).Result;
+                        if (retrievedOrder != null)
+                        {
+                            TestContext.Current.SendDiagnosticMessage($"Order {retrievedOrder.Id} successfully processed!");
+                            order = retrievedOrder;
+                            cts.Cancel(); // Cancel the consumer after successful processing
+                            return true;
+                        }
+                        return false;
+                    }
+                    catch (OrderNotFoundException)
+                    {
+                        TestContext.Current.SendDiagnosticMessage($"Order {expectedOrderId} not found yet, continuing to poll...");
+                        return false;
+                    }
+                    catch (AggregateException ex) when (ex.InnerException is OrderNotFoundException)
+                    {
+                        TestContext.Current.SendDiagnosticMessage($"Order {expectedOrderId} not found yet, continuing to poll...");
+                        return false;
+                    }
+                });
 
             Assert.NotNull(order);
             // Verify the order properties match expected values
@@ -217,47 +300,18 @@ public class OrderEventListenerTests : BaseIntegrationTest
         }
         finally
         {
-            // Stop the consumer
+            // Stop the consumer - if not already stopped
             cts.Cancel();
-            await consumerTask;
-        }
-    }
-
-    private async Task<OrderModel> PollForOrderProcessingAsync(
-        string expectedOrderId,
-        CancellationTokenSource cts)
-    {
-        var pollDelay = TimeSpan.FromMilliseconds(400);
-        var pollInterval = TimeSpan.FromMilliseconds(400);
-        var startTime = DateTime.UtcNow;
-
-        var orderUseCase = Factory.Services.GetRequiredService<OrderUseCase>();
-        // Initial delay
-        await Task.Delay(pollDelay, TestContext.Current.CancellationToken);
-
-        while (DateTime.UtcNow - startTime < TimeSpan.FromSeconds(4))
-        {
             try
             {
-                var order = await orderUseCase.GetOrderAsync(expectedOrderId, TestContext.Current.CancellationToken);
-                
-                if (order is not null)
-                {
-                    TestOutputHelper.WriteLine($"Order {order.Id} successfully processed!");
-                    cts.Cancel(); // Cancel the consumer after successful processing
-                    return order;
-                }
+                await consumerTask;
             }
-            catch (OrderNotFoundException)
+            catch (OperationCanceledException)
             {
-                // Continue polling until timeout
-                TestOutputHelper.WriteLine($"Order {expectedOrderId} not found yet, continuing to poll...");
+                // Expected when we cancel
+                TestContext.Current.SendDiagnosticMessage("Order event consumer stopped");
             }
-
-            await Task.Delay(pollInterval, TestContext.Current.CancellationToken);
         }
-
-        throw new TimeoutException($"Order {expectedOrderId} was not processed within the expected timeout.");
     }
 
     private async Task StartOrderEventConsumerAsync(CancellationToken cancellationToken)
@@ -266,7 +320,7 @@ public class OrderEventListenerTests : BaseIntegrationTest
         var logger = Factory.Services.GetRequiredService<ILogger<OrderEventConsumerHostedService>>();
         var orderEventConsumer = new OrderEventConsumerHostedService(logger, Factory.Services);
 
-        TestOutputHelper.WriteLine("Starting OrderEventConsumer for test");
+        TestContext.Current.SendDiagnosticMessage("Starting OrderEventConsumer for test");
         
         try
         {
@@ -281,7 +335,7 @@ public class OrderEventListenerTests : BaseIntegrationTest
         {
             await orderEventConsumer.StopAsync(CancellationToken.None);
             orderEventConsumer.Dispose();
-            TestOutputHelper.WriteLine("OrderEventConsumer stopped");
+            TestContext.Current.SendDiagnosticMessage("OrderEventConsumer stopped");
         }
     }
 }
@@ -297,6 +351,9 @@ The important things to get in this test are:
 * Within each polling iteration, we're checking for the order with id `123-456-789` because these are the values defined within the `order-events-asyncapi.yaml` AsyncAPI contract examples
 * If we retrieve this order and get the correct information from the service, it means that is has been received and correctly processed!
 * If no message is found before the end of 4 seconds, the loop exits with a `TimeoutException` and we mark our test as failed.
+
+> [!TIP]
+> You can run it using this command: `dotnet test tests/Order.Service.Tests --filter "FullyQualifiedName~OrderEventListenerTests"`
 
 The sequence diagram below details the test sequence. You'll see 3 parallel blocks being executed:
 * The first corresponds to Microcks mocks - where it connects to Kafka, creates a topic and publishes sample messages each 3 seconds,
@@ -351,7 +408,7 @@ To further deepen you knowledge on this, please check the following elements:
 
 * Explore our [AsyncAPI Extensions](https://microcks.io/documentation/references/artifacts/asyncapi-conventions/#asyncapi-extensions) to see how your can control this
 
-### Why we manually start the consumer instead of relying on IHostedService
+### Why we manually start the consumer instead of relying on `IHostedService`?
 
 In a typical .NET application, the `OrderEventConsumerHostedService` would be automatically started by the dependency injection container as part of the application startup. However, in integration tests, we manually start and stop the consumer to gain precise control over the test execution.
 

@@ -621,7 +621,7 @@ public class OrderControllerPostmanContractTests : BaseIntegrationTest
             TestEndpoint = "http://host.testcontainers.internal:" + Port + "/api"
         };
 
-        var testResult = await MicrocksContainer.TestEndpointAsync(request);
+        var testResult = await MicrocksContainer.TestEndpointAsync(request, TestContext.Current.CancellationToken);
 
         Assert.True(testResult.Success, "Test should be successful");
 
