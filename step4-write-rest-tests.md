@@ -239,7 +239,7 @@ using Testcontainers.Kafka;
 namespace Order.Service.Tests;
 
 [Collection(SharedTestCollection.Name)]
-public class BaseIntegrationTest : IClassFixture<OrderServiceWebApplicationFactory<Program>>
+public class BaseIntegrationTest
 {
     public WebApplicationFactory<Program> Factory { get; private set; }
 
@@ -266,6 +266,9 @@ public class BaseIntegrationTest : IClassFixture<OrderServiceWebApplicationFacto
     }
 }
 ```
+
+> [!NOTE]
+> If you wonder about the `[Collection(SharedTestCollection.Name)]` attribute on `BaseIntegrationTest`, please check our [note on shared test collection](shared-test-collection.md)
 
 ## First Test - Verify our RESTClient
 
