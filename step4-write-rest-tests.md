@@ -238,6 +238,7 @@ using Testcontainers.Kafka;
 
 namespace Order.Service.Tests;
 
+[Collection(SharedTestCollection.Name)]
 public class BaseIntegrationTest : IClassFixture<OrderServiceWebApplicationFactory<Program>>
 {
     public WebApplicationFactory<Program> Factory { get; private set; }
